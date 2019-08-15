@@ -1,6 +1,8 @@
-# Ansible ACI Multi-Site Orchetrator Playbooks
+# Ansible Cisco ACI Multi-Site Orchetrator Playbooks
 
 The Cisco ACI Multi-Site Orchestrator (MSO) is responsible for provisioning, health monitoring, and managing the full lifecycle of Cisco ACI networking policies and stretched tenant policies across Cisco ACI sites around the world. It essentially represents the single source of truth for these policies.
+
+These Ansible playbooks and supporting files enable the configuration and deployment of ACI Policy in the Data Center and Cloud.
 
 ## Resources
 
