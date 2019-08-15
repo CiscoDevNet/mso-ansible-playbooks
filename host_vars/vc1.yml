@@ -1,0 +1,8 @@
+---
+# IP or hostname for the vCenter
+ansible_host: 198.18.133.30
+# Login credentials
+ansible_user: demouser
+ansible_password: C1sco12345
+# Set to true for production setups that use trusted certificates!
+validate_certs: false

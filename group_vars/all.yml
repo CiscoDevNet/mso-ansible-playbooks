@@ -1,0 +1,13 @@
+---
+# This is used to load the data model that feeds into
+# all of the playbooks in this collection from the local
+# file, i.e. vars/customer_01.yml
+customer_name: customer_01
+
+# The greenfield flag instructs the playbook to perform
+# checks and stop execution if any objects are already created
+greenfield_check: false
+
+# This flag instructs the playbook to remove any existing
+# configuration before applying its own
+cleanup_before_deploy: true

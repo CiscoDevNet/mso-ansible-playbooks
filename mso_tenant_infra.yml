@@ -1,0 +1,220 @@
+---
+
+# This play verifies that the connection details are defined
+# in the hostvars (e.g. host_vars/mso1.yml) and it then loads
+# the data model for the new tenant (vars/tenant_name.yml).
+- name: PRE-DEPLOYMENT SETUP AND VALIDATION
+  hosts: mso1
+
+  tasks:
+
+    # All of these should be defined:
+    # host_vars: ansible_host, ansible_user, ansible_password, validate_certs
+    # group_vars/all: customer_name
+    - name: Test that connection details are defined
+      assert:
+        that:
+          - "ansible_host is defined"
+          - "ansible_user is defined"
+          - "ansible_password is defined"
+          - "validate_certs is defined"
+          - "customer_name is defined"
+        fail_msg: "Please ensure that these variables exist: ansible_host,
+          ansible_user, ansible_password, validate_certs and customer_name!"
+        quiet: true
+
+    # These variables represent the data model and are used by
+    # the rest of the playbook to deploy the policy. Refer to the file for
+    # more details about each variable.
+    - name: Load Infrastructure Definition
+      include_vars:
+        file: "{{ customer_name }}.yml"
+
+# This play performs greenfield checks and/or removes all relevant
+# pre-existing policy in preparation for deploying configuration.
+- name: PREFLIGHT GREENFIELD CHECKS AND OPTIONAL CLEANUP
+  hosts: mso1
+
+  vars:
+    # This dictionary is provided to each MSO module so that
+    # it knows how to connect to the orchestrator itself.
+    connection_details: &connection_details
+      hostname: "{{ ansible_host }}"
+      username: "{{ ansible_user }}"
+      password: "{{ ansible_password }}"
+      validate_certs: "{{ validate_certs }}"
+
+  tasks:
+
+    # This block checks whether we are deploying in a greenfield
+    # situation or not. If 'greenfield_check' is set to true, the play
+    # will stop if it finds any pre-existing configuration on the MSO.
+    - block:
+        # We only care about the tenant from our data model, so
+        # the query is whether it exists or not.
+        - name: Query MSO for intended tenant
+          mso_tenant:
+            <<: *connection_details
+            tenant: "{{ tenant.name }}"
+            state: query
+          delegate_to: localhost
+          register: query_result
+
+        # If the tenant exists, we are not in a greenfield situation, so
+        # stop the playbook execution with an error message.
+        - name: Check and fail if tenant exists (greenfield)
+          assert:
+            that: "not query_result.current.get('id')"
+            quiet: true
+            fail_msg: "Tenant '{{ tenant.name }}' already exists!"
+
+        # Similarly, query for the schema name defined in our data model
+        # and stop execution if it is already in use.
+        - name: Query MSO for intended schema
+          mso_schema:
+            <<: *connection_details
+            schema: "{{ schema.name }}"
+            state: query
+          delegate_to: localhost
+          register: query_result
+
+        # Further checks do not make sense due to simple logic:
+        # Templates, VRFs and BDs cannot exist without a schema, so this
+        # assertion would always fail first even if such objects existed.
+        - name: Check and fail if schema exists (greenfield)
+          assert:
+            that: "not query_result.current.get('id')"
+            quiet: true
+            fail_msg: "Schema '{{ schema.name }}' already exists!"
+
+      when: "greenfield_check"
+
+    # This block simply removes any relevant configuration to provide
+    # a clean slate. If 'cleanup_before_deploy' is set to true, the play
+    # will remove the schema (together with all of its dependent objects)
+    # and then the tenant.
+    # WARNING: removing the tenant or the schema may delete other policy
+    #          objects unrelated to our data model that belong to the
+    #          tenant or the schema!
+    - block:
+        - name: Remove intended schema if it already exists
+          mso_schema:
+            <<: *connection_details
+            schema: "{{ schema.name }}"
+            state: absent
+          delegate_to: localhost
+
+        - name: Remove intended tenant if it already exists
+          mso_tenant:
+            <<: *connection_details
+            tenant: "{{ tenant.name }}"
+            state: absent
+          delegate_to: localhost
+
+      # This block is only executed if 'cleanup_before_deploy' is true
+      when: "cleanup_before_deploy"
+
+
+# This play creates the necessary policy on the MSO for the
+# provisioning of a new tenant, VRFs and Bridge Domains.
+# All tenant data comes from our data model and is not hardcoded
+# in any way in the playbook to make our playbook modular and
+# data source agnostic.
+- name: PROVISION TENANT INFRASTRUCTURE
+  hosts: mso1
+
+  tasks:
+    # This task creates the tenant on the MSO and binds it to
+    # a list of sites. In turn, that instructs the MSO to deploy
+    # the tenant to all the required ACI fabrics (sites).
+    - name: Create the Tenant
+      mso_tenant:
+        <<: *connection_details
+        tenant: "{{ tenant.name }}"
+        display_name: "{{ tenant.displayname }}"
+        description: "{{ tenant.description }}"
+        sites: "{{ tenant.sites }}"
+        state: present
+      delegate_to: localhost
+
+    # This module creates the schema (if necessary) and associates
+    # a new template to it. As we may have any number of templates
+    # in our data model, we loop over a list.
+    - name: Create Schema and Templates
+      mso_schema_template:
+        <<: *connection_details
+        tenant: "{{ tenant.name }}"
+        schema: "{{ schema.name }}"
+        template: "{{ template.name }}"
+        state: present
+      delegate_to: localhost
+      loop: "{{ schema.templates }}"
+      loop_control:
+        loop_var: template
+        label: "{{ template.name }} for {{ schema.name }}"
+
+    # This module associates a template with a site within its schema
+    # As we may have any number of templates in our data model,
+    # we loop over a list.
+    - name: Connect a site to a schema and its template
+      mso_schema_site:
+        <<: *connection_details
+        schema: "{{ schema.name }}"
+        site: "{{ template.site }}"
+        template: "{{ template.name }}"
+        state: present
+      delegate_to: localhost
+      loop: "{{ schema.templates }}"
+      loop_control:
+        loop_var: template
+        label: "{{ template.name }} for {{ template.site }}"
+
+    # Here we create VRFs, each belonging to a particular template
+    # within the same schema.
+    - name: Create VRFs
+      mso_schema_template_vrf:
+        <<: *connection_details
+        schema: "{{ schema.name }}"
+        template: "{{ vrf.template }}"
+        vrf: "{{ vrf.name }}"
+        state: present
+      delegate_to: localhost
+      loop: "{{ schema.vrfs }}"
+      loop_control:
+        loop_var: vrf
+        label: "{{ vrf.name }} for {{ vrf.template }}"
+
+    # This module creates Bridge Domains, each belonging to a particular
+    # VRF in a template, and containing a number of multi-site subnets.
+    # 'layer2_stretch' is required to define multi-site subnets.
+    - name: Create and Assign Bridge Domains to VRFs
+      mso_schema_template_bd:
+        <<: *connection_details
+        schema: "{{ schema.name }}"
+        template: "{{ bd.template }}"
+        bd: "{{ bd.name }}"
+        vrf:
+          name: "{{ bd.vrf }}"
+        subnets: "{{ bd.subnets }}"
+        layer2_stretch: true
+        state: present
+      delegate_to: localhost
+      loop: "{{ schema.bridge_domains }}"
+      loop_control:
+        loop_var: bd
+        label: "{{ bd.name }} for {{ bd.template }}"
+
+    # Finally, we deploy each schema template to its fabrics.
+    # This operation actually creates the VRF, BD and subnet policies
+    # on the ACI fabrics.
+    - name: Deploy a schema template
+      mso_schema_template_deploy:
+        <<: *connection_details
+        schema: "{{ schema.name }}"
+        template: "{{ template.name }}"
+        state: deploy
+      delegate_to: localhost
+      loop: "{{ schema.templates }}"
+      loop_control:
+        loop_var: template
+        label: "{{ template.name }} for {{ template.site }}"

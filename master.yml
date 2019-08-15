@@ -1,0 +1,32 @@
+---
+##################################################################
+##### Main playbook for Multi-Site Configuration Management  #####
+##################################################################
+
+# All playbooks imported here are designed to also execute independently.
+# The workflow is linear and each playbook depends on the policy objects
+# created by the playbooks before it!
+
+##### Step 1: Create a Tenant and its VRFs and Bridge Domains.
+# Creates: Tenant, Schema, Templates, VRFs, BDs
+# Requires: MSO with ACI fabrics provisioned (sites)
+- name: PROVISION TENANT INFRASTRUCTURE
+  import_playbook: mso_tenant_infra.yml
+
+##### Step 2: Create Application Profiles and Endpoint Groups.
+# Creates: ANPs, EPGs
+# Requires: Tenant, Schema, Templates, BDs
+- name: PROVISION APPLICATION PROFILES
+  import_playbook: mso_epgs.yml
+
+##### Step 3: Create ACI VMM Domains and bind VMs to Endpoint Groups.
+# Creates: VMM domain, Port-Groups
+# Requires: Tenant, ANPs, EPGs, vCenter
+- name: CONNECT VIRTUAL MACHINES TO ENDPOINT GROUPS
+  import_playbook: aci_epg_vmm.yml
+
+##### Step 4: Create and apply the Security Policy (Contracts).
+# Creates: Filters, Filter Entries, Contracts
+# Requires: Tenant, Schema, Templates, ANPs, EPGs
+- name: PROVISION SECURITY POLICY
+  import_playbook: mso_contracts.yml

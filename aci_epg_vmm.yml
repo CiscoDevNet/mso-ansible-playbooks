@@ -1,0 +1,125 @@
+---
+
+# This play verifies that the connection details are defined
+# in the hostvars (e.g. host_vars/apic1_site1.yml) and it then loads
+# the data model for the new tenant (vars/tenant_name.yml).
+- name: PRE-DEPLOYMENT SETUP AND VALIDATION
+  hosts: apics
+
+  tasks:
+
+    # All of these should be defined:
+    # host_vars: ansible_host, ansible_user, ansible_password, validate_certs
+    # group_vars/all: customer_name
+    - name: Test that connection details are defined
+      assert:
+        that:
+          - "ansible_host is defined"
+          - "ansible_user is defined"
+          - "ansible_password is defined"
+          - "validate_certs is defined"
+          - "customer_name is defined"
+        fail_msg: "Please ensure that these variables exist: ansible_host,
+          ansible_user, ansible_password, validate_certs and customer_name!"
+        quiet: true
+
+    # These variables represent the data model and are used by
+    # the rest of the playbook to deploy the policy. Refer to the file for
+    # more details about each variable.
+    - name: Load Infrastructure Definition
+      include_vars:
+        file: "{{ customer_name }}.yml"
+
+# This play optionally removes all relevant
+# pre-existing policy in preparation for deploying configuration.
+- name: PRE-DEPLOYMENT OPTIONAL CLEANUP
+  hosts: apics
+
+  vars:
+    # This dictionary is provided to each ACI module so that
+    # it knows how to connect to the orchestrator itself.
+    connection_details: &connection_details
+      hostname: "{{ ansible_host }}"
+      username: "{{ ansible_user }}"
+      password: "{{ ansible_password }}"
+      validate_certs: "{{ validate_certs }}"
+
+  tasks:
+
+    # This block simply removes any relevant configuration to provide
+    # a clean slate. If 'cleanup_before_deploy' is set to true, the play
+    # will remove the objects together with all of their dependents.
+    - block:
+        - name: Remove intended VMM domains
+          aci_domain:
+            <<: *connection_details
+            domain: "{{ domain.name }}"
+            domain_type: "{{ domain.domain_type }}"
+            vm_provider: "{{ domain.vm_provider }}"
+            state: absent
+          delegate_to: localhost
+          loop: "{{ schema.domains }}"
+          loop_control:
+            loop_var: domain
+            label: "{{ domain.name }}"
+
+      # This block is only executed if 'cleanup_before_deploy' is true
+      when: "cleanup_before_deploy"
+
+
+# This play creates the VMM domains on the site APICs and
+# connects them to the Endpoint Groups.
+- name: PROVISION EPG VMM DOMAINS
+  hosts: apics
+
+  tasks:
+    # This task creates the VMM domains on each site APIC individually.
+    - name: Create defined VMM domains
+      aci_domain:
+        <<: *connection_details
+        domain: "{{ domain.name }}"
+        domain_type: "{{ domain.domain_type }}"
+        vm_provider: "{{ domain.vm_provider }}"
+        state: present
+      delegate_to: localhost
+      loop: "{{ schema.domains }}"
+      loop_control:
+        loop_var: domain
+        label: "{{ domain.name }}"
+
+    # Here we connect EPGs to their respective VMM domains which allows
+    # for later assignment of VMs to dynamic port-groups.
+    - name: Bind EPGs to VMM domains
+      aci_epg_to_domain:
+        <<: *connection_details
+        tenant: "{{ tenant.name }}"
+        ap: "{{ epg.anp }}"
+        epg: "{{ epg.name }}"
+        domain: "{{ epg.domain }}"
+        domain_type: "vmm"
+        vm_provider: "vmware"
+        state: present
+      delegate_to: localhost
+      loop: "{{ schema.epgs }}"
+      loop_control:
+        loop_var: epg
+        label: "{{ epg.name }} bound to {{ epg.domain }}"
+
+# This play updates the actual vCenter VMs with the ACI created port-groups
+# so they belong to their respective Endpoint Groups.
+- name: UPDATE VM PORT-GROUPS
+  hosts: vc1
+
+  tasks:
+    - name: Update VMs
+      vmware_guest:
+        <<: *connection_details
+        datacenter: "{{ vm.datacenter }}"
+        name: "{{ vm.name }}"
+        networks:
+          - name: "{{ vm.portgroup }}"
+      delegate_to: localhost
+      loop: "{{ schema.vms }}"
+      loop_control:
+        loop_var: vm
+        label: "{{ vm.name }} bound to {{ vm.portgroup }}"

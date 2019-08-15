@@ -1,0 +1,157 @@
+---
+# The top-level policy container, our tenant will hold
+# all of the other objects. This dictionary defines
+# its name, description and which sites it will be
+# deployed to.
+tenant:
+  # This name will be visible in the ACI policy
+  name: "customer_01"
+  # This name will be visible in the MSO Web GUI
+  displayname: "Customer 01"
+  description: "Tenant deployed by MSO and Ansible"
+  # The sites must match exactly the names defined on the MSO!
+  # Each site corresponds to an ACI fabric.
+  sites:
+    - "San Francisco"
+    - "New York"
+
+# The MSO Schema and Templates define the policy that will be applied
+# to the respective ACI fabrics. We define one schema that contains one
+# or more templates which instruct each site to deploy objects such as
+# EPGs, VRFs and Bridge Domains.
+schema:
+  name: "Multisite Three Tier App"
+  # Each template must have a name and apply to a site.
+  templates:
+    - name: "T1-SF"
+      site: "San Francisco"
+    - name: "T2-NY"
+      site: "New York"
+
+  # VRFs must have a name and belong to a template.
+  vrfs:
+    - name: "vrf_3ta"
+      template: "T1-SF"
+    - name: "vrf_3ta"
+      template: "T2-NY"
+
+  # Bridge Domains must have a name, belong to a template and are contained
+  # in a VRF. Subnets defined here are multi-site and will be stretched.
+  bridge_domains:
+    - name: "bd_3ta"
+      template: "T1-SF"
+      vrf: "vrf_3ta"
+      subnets:
+        - ip: "10.1.100.1/24"
+
+  # Application Profiles are the container to which EPGs belong to.
+  anps:
+    - name: "anp_3ta"
+      template: "T1-SF"
+
+  # Endpoint Groups define Endpoint related policy (domain, BD) and allow for
+  # contract bindings to implement security policies.
+  epgs:
+    - name: "epg_web"
+      anp: "anp_3ta"
+      bd: "bd_3ta"
+      template: "T1-SF"
+      domain: "vmw1"
+
+    - name: "epg_db"
+      anp: "anp_3ta"
+      bd: "bd_3ta"
+      template: "T1-SF"
+      domain: "vmw1"
+
+    - name: "epg_app"
+      anp: "anp_3ta"
+      bd: "bd_3ta"
+      template: "T1-SF"
+      domain: "vmw1"
+
+  # Domains make the connection between the physical or virtual servers
+  # and the ACI policy model. In this case our endpoints are vmware VMs.
+  domains:
+    - name: "vmw1"
+      domain_type: "vmm"
+      vm_provider: "vmware"
+
+  # Each VM must be assigned to a port group on its virtual-switch in
+  # order for its traffic to belong to the correct EPG in ACI.
+  vms:
+    - name: "ThreeTierDemo-app"
+      portgroup: "customer_01|anp_3ta|epg_app"
+      datacenter: "S1-SF"
+    - name: "ThreeTierDemo-db"
+      portgroup: "customer_01|anp_3ta|epg_db"
+      datacenter: "S1-SF"
+    - name: "ThreeTierDemo-web"
+      portgroup: "customer_01|anp_3ta|epg_web"
+      datacenter: "S1-SF"
+
+  # Filters define stateless traffic flows.
+  filters:
+    - name: "filter_web"
+      template: "T1-SF"
+      entry: "http"
+      ethertype: "ip"
+      ip_protocol: "tcp"
+      destination_from: "80"
+      destination_to: "80"
+
+    - name: "filter_app"
+      template: "T1-SF"
+      entry: "app"
+      ethertype: "ip"
+      ip_protocol: "tcp"
+      destination_from: "8135"
+      destination_to: "8135"
+
+    - name: "filter_db"
+      template: "T1-SF"
+      entry: "pgsql"
+      ethertype: "ip"
+      ip_protocol: "tcp"
+      destination_from: "5432"
+      destination_to: "5432"
+
+  # Contracts define security and connectivity policies that
+  # that implement specific filters
+  contracts:
+    - name: "web2app"
+      template: "T1-SF"
+      filter: "filter_app"
+      filter_type: "consumer-to-provider"
+
+    - name: "app2db"
+      template: "T1-SF"
+      filter: "filter_db"
+      filter_type: "consumer-to-provider"
+
+  # EPGs can be providers and/or consumers for specific contracts, opening
+  # up the traffic flow as per the filter definitions.
+  contract_bindings:
+    # Here were are specifying that web servers can connect to app servers
+    - epg: "epg_web"
+      anp: "anp_3ta"
+      template: "T1-SF"
+      contract: "web2app"
+      type: "consumer"
+    - epg: "epg_app"
+      anp: "anp_3ta"
+      template: "T1-SF"
+      contract: "web2app"
+      type: "provider"
+
+    # Here were are specifying that app servers can connect to db servers
+    - epg: "epg_app"
+      anp: "anp_3ta"
+      template: "T1-SF"
+      contract: "app2db"
+      type: "consumer"
+    - epg: "epg_db"
+      anp: "anp_3ta"
+      template: "T1-SF"
+      contract: "app2db"
+      type: "provider"

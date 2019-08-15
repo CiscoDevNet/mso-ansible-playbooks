@@ -1,0 +1,126 @@
+---
+
+# This play verifies that the connection details are defined
+# in the hostvars (e.g. host_vars/mso1.yml) and it then loads
+# the data model for the new tenant (vars/tenant_name.yml).
+- name: PRE-DEPLOYMENT SETUP AND VALIDATION
+  hosts: mso1
+
+  tasks:
+
+    # All of these should be defined:
+    # host_vars: ansible_host, ansible_user, ansible_password, validate_certs
+    # group_vars/all: customer_name
+    - name: Test that connection details are defined
+      assert:
+        that:
+          - "ansible_host is defined"
+          - "ansible_user is defined"
+          - "ansible_password is defined"
+          - "validate_certs is defined"
+          - "customer_name is defined"
+        fail_msg: "Please ensure that these variables exist: ansible_host,
+          ansible_user, ansible_password, validate_certs and customer_name!"
+        quiet: true
+
+    # These variables represent the data model and are used by
+    # the rest of the playbook to deploy the policy. Refer to the file for
+    # more details about each variable.
+    - name: Load Infrastructure Definition
+      include_vars:
+        file: "{{ customer_name }}.yml"
+
+# This play optionally removes all relevant
+# pre-existing policy in preparation for deploying configuration.
+- name: PRE-DEPLOYMENT OPTIONAL CLEANUP
+  hosts: mso1
+
+  vars:
+    # This dictionary is provided to each MSO module so that
+    # it knows how to connect to the orchestrator itself.
+    connection_details: &connection_details
+      hostname: "{{ ansible_host }}"
+      username: "{{ ansible_user }}"
+      password: "{{ ansible_password }}"
+      validate_certs: "{{ validate_certs }}"
+
+  tasks:
+
+    # This block simply removes any relevant configuration to provide
+    # a clean slate. If 'cleanup_before_deploy' is set to true, the play
+    # will remove the objects together with all of their dependents.
+    - block:
+        - name: Remove intended Application Profile if it already exists
+          mso_schema_template_anp:
+            <<: *connection_details
+            schema: "{{ schema.name }}"
+            template: "{{ anp.template }}"
+            anp: "{{ anp.name }}"
+            state: absent
+          delegate_to: localhost
+          loop: "{{ schema.anps }}"
+          loop_control:
+            loop_var: anp
+            label: "{{ anp.name }} for {{ anp.template }}"
+
+      # This block is only executed if 'cleanup_before_deploy' is true
+      when: "cleanup_before_deploy"
+
+
+# This play creates the necessary policy on the MSO for the
+# provisioning of a new Application Profile and Endpoint Groups.
+# All tenant data comes from our data model and is not hardcoded
+# in any way in the playbook to make our playbook modular and
+# data source agnostic.
+- name: PROVISION ENDPOINT GROUPS
+  hosts: mso1
+
+  tasks:
+    # This task creates the Application Profiles on the MSO.
+    # Each template may have one or more profiles.
+    - name: Create the Application Profiles
+      mso_schema_template_anp:
+        <<: *connection_details
+        schema: "{{ schema.name }}"
+        template: "{{ anp.template }}"
+        anp: "{{ anp.name }}"
+        state: present
+      delegate_to: localhost
+      loop: "{{ schema.anps }}"
+      loop_control:
+        loop_var: anp
+        label: "{{ anp.name }} for {{ anp.template }}"
+
+    # Here we create all the defined Endpoint Groups. Each EPG
+    # is bound to a particular template, Application Profile, and
+    # requires a Bridge Domain.
+    - name: Create Endpoint Groups
+      mso_schema_template_anp_epg:
+        <<: *connection_details
+        schema: "{{ schema.name }}"
+        template: "{{ epg.template }}"
+        anp: "{{ epg.anp }}"
+        epg: "{{ epg.name }}"
+        bd:
+          name: "{{ epg.bd }}"
+        state: present
+      delegate_to: localhost
+      loop: "{{ schema.epgs }}"
+      loop_control:
+        loop_var: epg
+        label: "{{ epg.name }} for {{ epg.anp }}"
+
+    # Finally, we deploy each schema template to its fabrics.
+    # This operation actually creates the ANP and EPGs
+    # on the ACI fabrics.
+    - name: Deploy a schema template
+      mso_schema_template_deploy:
+        <<: *connection_details
+        schema: "{{ schema.name }}"
+        template: "{{ template.name }}"
+        state: deploy
+      delegate_to: localhost
+      loop: "{{ schema.templates }}"
+      loop_control:
+        loop_var: template
+        label: "{{ template.name }} for {{ template.site }}"
