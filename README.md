@@ -1,4 +1,4 @@
-# Ansible ACI Multi-Site Orchetrator Playbooks
+# Ansible ACI Multi-Site Orchestrator Playbooks
 
 The Cisco ACI Multi-Site Orchestrator (MSO) is responsible for provisioning, health monitoring, and managing the full lifecycle of Cisco ACI networking policies and stretched tenant policies across Cisco ACI sites around the world. It essentially represents the single source of truth for these policies.
 
@@ -11,7 +11,7 @@ Learing Labs:
 ## Prerequisites:
 
 - MSO version 2.1
-- Minmally two ACI fabrics provisioned on the MSO as sites with fully operational multi-site configuration and vCenter/ESXi hosted VMs.
+- Minimally two ACI fabrics provisioned on the MSO as sites with fully operational multi-site configuration and vCenter/ESXi hosted VMs.
 
 ## Dependancies
 
@@ -20,7 +20,7 @@ Learing Labs:
 
 ## Configuration / Getting Started
 
-- Review the `vars` and `hosts` files and update to refelect your data center.
+- Review the `vars` and `hosts` files and update to reflect your data center.
 
 - Start with the [master.yml](master.yml) playbook.
 
@@ -32,6 +32,6 @@ Learing Labs:
 
 - The data model is fairly flat due to how the modules are set up and the need to keep playbooks linear.
 
-    + There is a tradeoff, as the model could be more hierarchical in structure which would drive more complexity into the playbooks (i.e. requiring roles and more complicated looping or json queries)
+    + There is a tradeoff, as the model could be more hierarchical in structure which would drive more complexity into the playbooks (i.e. requiring roles and more complicated looping or JSON queries)
 
 - Module design feedback: a big challenge lies in that certain object relationships can be one-to-many but most modules only allow one-to-one in a single operation.
